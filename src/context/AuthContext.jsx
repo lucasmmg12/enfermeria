@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { loginUser } from '../lib/utils'
+import { trackLogin, trackLogout } from '../lib/hubTracker'
 
 const AuthContext = createContext(null)
 
@@ -22,6 +23,8 @@ export function AuthProvider({ children }) {
       const userData = { id: dbUser.id, email: dbUser.email, nombre: `${dbUser.nombre} ${dbUser.apellido}`, rol: dbUser.rol }
       setUser(userData)
       localStorage.setItem('enf_user', JSON.stringify(userData))
+      // Track in Hub Monitor (non-blocking)
+      trackLogin(dbUser.email)
       return { success: true }
     }
 
@@ -37,6 +40,7 @@ export function AuthProvider({ children }) {
   }
 
   const logout = () => {
+    if (user?.email) trackLogout(user.email)
     setUser(null)
     localStorage.removeItem('enf_user')
   }
