@@ -1,10 +1,27 @@
 /**
  * Hub Session Tracker — Enfermería
- * Usa RPC hub_log_external_event porque Enfermería no usa Supabase Auth
+ * Usa RPC hub_log_external_event porque Enfermería no usa Supabase Auth.
+ * Usa un cliente Supabase dedicado al Hub (NO el de Enfermería).
  */
-import { supabase } from './supabase'
+import { createClient } from '@supabase/supabase-js'
 
 const ENFERMERIA_SISTEMA_ID = '50945c9d-6a01-41dd-9d5f-d3ff55c99d20'
+
+// Cliente dedicado al Hub
+const HUB_SUPABASE_URL = import.meta.env.VITE_HUB_SUPABASE_URL
+const HUB_SUPABASE_ANON_KEY = import.meta.env.VITE_HUB_SUPABASE_ANON_KEY
+
+let hubClient = null
+function getHubClient() {
+  if (!HUB_SUPABASE_URL || !HUB_SUPABASE_ANON_KEY) {
+    console.warn('[HubTracker] Missing VITE_HUB_SUPABASE_URL or VITE_HUB_SUPABASE_ANON_KEY')
+    return null
+  }
+  if (!hubClient) {
+    hubClient = createClient(HUB_SUPABASE_URL, HUB_SUPABASE_ANON_KEY)
+  }
+  return hubClient
+}
 
 async function getPublicIP() {
   try {
@@ -26,8 +43,11 @@ function getGeo() {
 
 export async function trackLogin(userEmail) {
   try {
+    const hub = getHubClient()
+    if (!hub) return
+
     const [ip, geo] = await Promise.all([getPublicIP(), getGeo()])
-    await supabase.rpc('hub_log_external_event', {
+    await hub.rpc('hub_log_external_event', {
       p_user_identifier: userEmail,
       p_evento: 'login',
       p_sistema_id: ENFERMERIA_SISTEMA_ID,
@@ -42,7 +62,10 @@ export async function trackLogin(userEmail) {
 
 export async function trackLogout(userEmail) {
   try {
-    await supabase.rpc('hub_log_external_event', {
+    const hub = getHubClient()
+    if (!hub) return
+
+    await hub.rpc('hub_log_external_event', {
       p_user_identifier: userEmail,
       p_evento: 'logout',
       p_sistema_id: ENFERMERIA_SISTEMA_ID,
