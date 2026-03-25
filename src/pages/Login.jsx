@@ -82,7 +82,7 @@ export default function Login() {
           </button>
 
           <p className="text-[10px] text-center text-slate-400 pt-2">
-            Sanatorio Argentino © 2026 · Grow Labs
+            Sanatorio Argentino © 2026
           </p>
         </form>
       </div>
