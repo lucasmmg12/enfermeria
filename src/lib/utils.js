@@ -105,16 +105,60 @@ export function parsePacienteNombre(rawName) {
 
 // ============ ENF_USUARIOS ============
 
+/**
+ * Login using Supabase Auth (signInWithPassword).
+ * After authentication, looks up or auto-creates an enf_usuarios profile.
+ */
 export async function loginUser(email, password) {
-  const { data, error } = await supabase
+  // 1. Authenticate with Supabase Auth
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (authError || !authData?.user) {
+    console.error('[Login] Auth error:', authError?.message)
+    return null
+  }
+
+  const authUser = authData.user
+
+  // 2. Look up existing enf_usuarios profile by email
+  const { data: profile, error: profileError } = await supabase
     .from('enf_usuarios')
     .select('*')
-    .eq('email', email)
-    .eq('password_hash', password)
+    .eq('email', authUser.email)
     .eq('activo', true)
+    .maybeSingle()
+
+  if (profile) return profile
+
+  // 3. Auto-create profile if none exists (first login sync)
+  const nameParts = (authUser.user_metadata?.full_name || authUser.email.split('@')[0]).split(' ')
+  const nombre = nameParts[0] || 'Usuario'
+  const apellido = nameParts.slice(1).join(' ') || ''
+
+  const { data: newProfile, error: createError } = await supabase
+    .from('enf_usuarios')
+    .insert({
+      id: authUser.id,
+      nombre,
+      apellido,
+      email: authUser.email,
+      password_hash: '---supabase-auth---',
+      rol: 'enfermero',
+      activo: true,
+    })
+    .select()
     .single()
-  if (error || !data) return null
-  return data
+
+  if (createError) {
+    console.error('[Login] Error creating profile:', createError.message)
+    // Return a minimal user object so the user can still log in
+    return { id: authUser.id, email: authUser.email, nombre, apellido, rol: 'enfermero' }
+  }
+
+  return newProfile
 }
 
 export async function fetchEnfUsuarios() {

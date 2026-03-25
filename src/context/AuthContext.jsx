@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 import { loginUser } from '../lib/utils'
 import { trackLogin, trackLogout } from '../lib/hubTracker'
 
@@ -9,15 +10,44 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const saved = localStorage.getItem('enf_user')
-    if (saved) {
-      try { setUser(JSON.parse(saved)) } catch {}
+    // Try to restore session from Supabase Auth first, then fallback to localStorage
+    const restoreSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          // We have a valid Supabase Auth session, look up enf_usuarios profile
+          const { data: profile } = await supabase
+            .from('enf_usuarios')
+            .select('*')
+            .eq('email', session.user.email)
+            .eq('activo', true)
+            .maybeSingle()
+
+          if (profile) {
+            const userData = { id: profile.id, email: profile.email, nombre: `${profile.nombre} ${profile.apellido}`, rol: profile.rol }
+            setUser(userData)
+            localStorage.setItem('enf_user', JSON.stringify(userData))
+            setLoading(false)
+            return
+          }
+        }
+      } catch (e) {
+        console.warn('[Auth] Session restore error:', e)
+      }
+
+      // Fallback to localStorage
+      const saved = localStorage.getItem('enf_user')
+      if (saved) {
+        try { setUser(JSON.parse(saved)) } catch {}
+      }
+      setLoading(false)
     }
-    setLoading(false)
+
+    restoreSession()
   }, [])
 
   const login = async (email, password) => {
-    // Try Supabase enf_usuarios first
+    // Try Supabase Auth + enf_usuarios profile
     const dbUser = await loginUser(email, password)
     if (dbUser) {
       const userData = { id: dbUser.id, email: dbUser.email, nombre: `${dbUser.nombre} ${dbUser.apellido}`, rol: dbUser.rol }
@@ -28,21 +58,15 @@ export function AuthProvider({ children }) {
       return { success: true }
     }
 
-    // Fallback for initial setup (before DB is ready)
-    if (email === 'admin' && password === '123456') {
-      const userData = { id: 'local-admin', email: 'admin', nombre: 'Administrador', rol: 'admin' }
-      setUser(userData)
-      localStorage.setItem('enf_user', JSON.stringify(userData))
-      return { success: true }
-    }
-
     return { success: false, error: 'Credenciales incorrectas' }
   }
 
-  const logout = () => {
+  const logout = async () => {
     if (user?.email) trackLogout(user.email)
     setUser(null)
     localStorage.removeItem('enf_user')
+    // Sign out from Supabase Auth
+    try { await supabase.auth.signOut() } catch {}
   }
 
   return (
