@@ -106,83 +106,63 @@ export function parsePacienteNombre(rawName) {
 // ============ ENF_USUARIOS ============
 
 /**
- * Dual-mode login:
- *  1. Try Supabase Auth (signInWithPassword) — for real domain users
- *  2. Fallback to enf_usuarios table — for legacy/seed users (admin, lucas, etc.)
+ * Login via Supabase Auth (signInWithPassword) exclusively.
+ * After auth, fetches the enf_usuarios profile for role/name data.
+ * 
+ * Users MUST be created from the Hub via hub_create_enfermeria_user() RPC,
+ * which syncs auth.users + hub_perfiles + enf_usuarios with the same UUID.
+ * 
+ * ❌ NO legacy fallback — passwords in enf_usuarios are deprecated.
  */
 export async function loginUser(email, password) {
-  // --- Mode 1: Supabase Auth ---
   try {
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
 
-    if (!authError && authData?.user) {
-      const authUser = authData.user
-      console.log('[Login] Supabase Auth OK for:', authUser.email)
-
-      // Look up enf_usuarios profile
-      const { data: profile } = await supabase
-        .from('enf_usuarios')
-        .select('*')
-        .eq('email', authUser.email)
-        .eq('activo', true)
-        .maybeSingle()
-
-      if (profile) return profile
-
-      // Auto-create profile on first login
-      const nameParts = (authUser.user_metadata?.full_name || authUser.email.split('@')[0]).split(' ')
-      const nombre = nameParts[0] || 'Usuario'
-      const apellido = nameParts.slice(1).join(' ') || ''
-
-      const { data: newProfile, error: createError } = await supabase
-        .from('enf_usuarios')
-        .insert({
-          id: authUser.id,
-          nombre,
-          apellido,
-          email: authUser.email,
-          password_hash: '---supabase-auth---',
-          rol: 'enfermero',
-          activo: true,
-        })
-        .select()
-        .single()
-
-      if (createError) {
-        console.warn('[Login] Could not create profile, using minimal:', createError.message)
-        return { id: authUser.id, email: authUser.email, nombre, apellido, rol: 'enfermero' }
-      }
-      return newProfile
+    if (authError || !authData?.user) {
+      console.warn('[Login] Auth failed:', authError?.message)
+      return null
     }
 
-    // Auth failed — log but don't return yet, try fallback
-    console.log('[Login] Supabase Auth failed:', authError?.message, '— trying enf_usuarios fallback')
-  } catch (e) {
-    console.warn('[Login] Supabase Auth exception:', e.message)
-  }
+    const authUser = authData.user
+    console.log('[Login] Supabase Auth OK for:', authUser.email)
 
-  // --- Mode 2: Legacy fallback — enf_usuarios table ---
-  try {
-    const { data, error } = await supabase
+    // Fetch enf_usuarios profile by auth user ID (aligned by Hub RPCs)
+    const { data: profile } = await supabase
       .from('enf_usuarios')
       .select('*')
-      .eq('email', email)
-      .eq('password_hash', password)
+      .eq('id', authUser.id)
       .eq('activo', true)
       .maybeSingle()
 
-    if (!error && data) {
-      console.log('[Login] Legacy fallback OK for:', data.email)
-      return data
+    if (profile) return profile
+
+    // Fallback: try by email (for users created before ID alignment)
+    const { data: profileByEmail } = await supabase
+      .from('enf_usuarios')
+      .select('*')
+      .eq('email', authUser.email)
+      .eq('activo', true)
+      .maybeSingle()
+
+    if (profileByEmail) return profileByEmail
+
+    // No enf_usuarios profile exists — return minimal data from auth
+    console.warn('[Login] No enf_usuarios profile found for:', authUser.email)
+    const nameParts = (authUser.user_metadata?.full_name || authUser.email.split('@')[0]).split(' ')
+    return {
+      id: authUser.id,
+      email: authUser.email,
+      nombre: nameParts[0] || 'Usuario',
+      apellido: nameParts.slice(1).join(' ') || '',
+      rol: 'enfermero',
     }
   } catch (e) {
-    console.warn('[Login] Legacy fallback error:', e.message)
+    console.error('[Login] Exception:', e.message)
+    return null
   }
-
-  return null
 }
 
 export async function fetchEnfUsuarios() {
